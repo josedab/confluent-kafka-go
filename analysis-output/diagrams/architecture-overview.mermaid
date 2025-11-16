@@ -1,0 +1,101 @@
+```mermaid
+graph TB
+    subgraph "Application Layer (Go)"
+        App[Go Application]
+        Producer[Producer API]
+        Consumer[Consumer API]
+        Admin[AdminClient API]
+    end
+
+    subgraph "CGo Bridge Layer"
+        ConfigMap[ConfigMap<br/>Configuration]
+        Handle[Handle<br/>Shared Infrastructure]
+        EventBridge[Event Bridge<br/>C callbacks → Go channels]
+        TypeConv[Type Conversion<br/>Go ↔ C marshaling]
+        MemMgmt[Memory Management<br/>malloc/free coordination]
+    end
+
+    subgraph "librdkafka Layer (C)"
+        RdKafka[rd_kafka_t<br/>Client Handle]
+        Queue[rd_kafka_queue_t<br/>Event Queue]
+        Protocol[Kafka Protocol<br/>Wire format]
+        Connection[Connection Pool<br/>TCP to brokers]
+        Compression[Compression<br/>gzip/snappy/lz4/zstd]
+        Batching[Message Batching]
+        Retry[Retry Logic]
+    end
+
+    subgraph "Kafka Cluster"
+        Broker1[Broker 1]
+        Broker2[Broker 2]
+        Broker3[Broker 3]
+    end
+
+    App --> Producer
+    App --> Consumer
+    App --> Admin
+
+    Producer --> ConfigMap
+    Consumer --> ConfigMap
+    Admin --> ConfigMap
+
+    Producer --> Handle
+    Consumer --> Handle
+    Admin --> Handle
+
+    Handle --> TypeConv
+    Handle --> EventBridge
+    Handle --> MemMgmt
+
+    TypeConv --> RdKafka
+    EventBridge --> Queue
+    MemMgmt --> RdKafka
+
+    RdKafka --> Queue
+    RdKafka --> Protocol
+    RdKafka --> Connection
+    RdKafka --> Compression
+    RdKafka --> Batching
+    RdKafka --> Retry
+
+    Connection --> Broker1
+    Connection --> Broker2
+    Connection --> Broker3
+
+    style App fill:#e1f5e1
+    style Producer fill:#e1f5e1
+    style Consumer fill:#e1f5e1
+    style Admin fill:#e1f5e1
+    style Handle fill:#fff4e1
+    style TypeConv fill:#fff4e1
+    style EventBridge fill:#fff4e1
+    style MemMgmt fill:#fff4e1
+    style RdKafka fill:#e1e9f5
+    style Protocol fill:#e1e9f5
+    style Connection fill:#e1e9f5
+```
+
+## Architecture Overview Diagram
+
+This diagram illustrates the three-tier architecture of confluent-kafka-go:
+
+### Layer 1: Application Layer (Green)
+- **Go Application**: User code
+- **Producer/Consumer/AdminClient**: High-level APIs
+
+### Layer 2: CGo Bridge Layer (Yellow)
+- **Handle**: Shared infrastructure for all clients
+- **Type Conversion**: Marshaling between Go and C types
+- **Event Bridge**: Routes C callbacks to Go channels
+- **Memory Management**: Coordinates allocation/deallocation across boundaries
+
+### Layer 3: librdkafka Layer (Blue)
+- **rd_kafka_t**: librdkafka client handle
+- **Protocol**: Kafka wire protocol implementation
+- **Connection Pool**: TCP connections to brokers
+- **Compression**: Message compression (gzip, snappy, lz4, zstd)
+- **Batching**: Message batching for efficiency
+- **Retry Logic**: Automatic retries with backoff
+
+### Key Insight
+The CGo bridge isolates complexity, allowing the Application Layer to remain pure Go while leveraging librdkafka's battle-tested C implementation.

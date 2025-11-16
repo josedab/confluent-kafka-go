@@ -1,0 +1,120 @@
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Cons as Consumer (Go)
+    participant CGo as CGo Bridge
+    participant RdK as librdkafka (C)
+    participant Coord as Group Coordinator
+    participant Broker as Kafka Broker
+
+    App->>Cons: NewConsumer(config)
+    Cons->>CGo: rd_kafka_new(CONSUMER)
+    CGo->>RdK: Create consumer handle
+    RdK-->>CGo: rd_kafka_t* handle
+    CGo-->>Cons: Consumer ready
+    Cons-->>App: Consumer instance
+
+    App->>Cons: SubscribeTopics(["topic1"])
+    Cons->>RdK: rd_kafka_subscribe()
+    RdK->>Coord: Join consumer group
+    Coord->>Coord: Assign partitions
+
+    alt Rebalance Occurs
+        Coord-->>RdK: Rebalance notification
+        RdK-->>CGo: Callback
+        CGo-->>Cons: AssignedPartitions event
+        Cons-->>App: Rebalance callback (optional)
+        App->>Cons: Assign(partitions)
+        Cons->>RdK: rd_kafka_assign()
+    end
+
+    loop Poll Loop
+        App->>Cons: Poll(100ms)
+        Cons->>CGo: rd_kafka_consumer_poll(100)
+        CGo->>RdK: Poll internal queue
+
+        alt Message Available
+            RdK->>Broker: Fetch request (if needed)
+            Broker-->>RdK: Batch of messages
+            RdK->>CGo: rd_kafka_message_t*
+            CGo->>CGo: Convert C → Go
+            CGo->>Cons: *kafka.Message
+            Cons-->>App: message, nil error
+
+            App->>App: Process message
+            App->>Cons: CommitMessage(msg)
+            Cons->>RdK: rd_kafka_commit()
+            RdK->>Coord: Store offset
+        else Timeout (No Messages)
+            RdK-->>CGo: NULL (timeout)
+            CGo-->>Cons: TimeoutError
+            Cons-->>App: nil, TimeoutError
+            Note over App: Not a fatal error<br/>Keep polling
+        end
+    end
+
+    App->>Cons: Close()
+    Cons->>RdK: rd_kafka_consumer_close()
+    RdK->>Coord: Leave group, commit offsets
+    RdK-->>Cons: Closed
+    Cons-->>App: Consumer closed
+```
+
+## Consumer Poll Flow
+
+This diagram illustrates the consumer message polling loop, including group coordination and rebalancing.
+
+### Key Phases
+
+1. **Initialization**
+   - Create consumer with group.id
+   - Subscribe to topics (can use regex)
+   - librdkafka joins consumer group
+
+2. **Group Coordination**
+   - Coordinator assigns partitions
+   - Rebalance events notify application
+   - Application can handle rebalance (optional callback)
+
+3. **Polling Loop**
+   - Application calls `Poll(timeout)`
+   - librdkafka fetches messages from broker (batched)
+   - CGo bridge converts C messages to Go
+   - Application processes message
+   - Application commits offset (manual or auto)
+
+4. **Rebalancing**
+   - Triggered by: new consumer joins, consumer leaves, partition count changes
+   - **Eager Rebalancing** (default): Stop-the-world, reassign all
+   - **Cooperative Rebalancing**: Incremental, minimal disruption
+
+5. **Shutdown**
+   - `Close()` commits final offsets
+   - Leaves consumer group
+   - Releases resources
+
+### Error Handling
+
+- **Timeout**: Not an error — just no messages available
+- **Network Error**: Automatic retry, consumer continues polling
+- **Rebalance**: Normal operation, not an error
+
+### Offset Management
+
+**Auto-Commit** (default):
+- Offsets committed periodically (e.g., every 5 seconds)
+- Risk: Message loss if consumer crashes before commit
+
+**Manual Commit** (recommended for at-least-once):
+- Application calls `CommitMessage(msg)` after processing
+- Guarantees: Message processed before offset committed
+
+**Transactional** (exactly-once):
+- Offsets committed as part of transaction
+- Used with transactional producer
+
+### Performance Notes
+
+- **Prefetching**: librdkafka fetches messages ahead of time
+- **Batching**: Multiple messages returned in single fetch request
+- **Timeout**: Use small timeout (100-1000ms) for responsive shutdown

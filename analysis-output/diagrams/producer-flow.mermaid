@@ -1,0 +1,91 @@
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Prod as Producer (Go)
+    participant CGo as CGo Bridge
+    participant RdK as librdkafka (C)
+    participant Queue as Internal Queue
+    participant Net as Network Thread
+    participant Broker as Kafka Broker
+
+    App->>Prod: Produce(message)
+    Note over Prod: Validate message<br/>(topic, partition)
+
+    Prod->>CGo: Convert Go message → C struct
+    Note over CGo: Handle nil key/value<br/>Marshal headers
+
+    CGo->>RdK: rd_kafka_producev()
+    RdK->>Queue: Enqueue message
+    Note over Queue: Batching buffer<br/>(linger.ms)
+
+    alt Queue Full
+        RdK-->>CGo: QUEUE_FULL error
+        CGo-->>Prod: Error: queue full
+        Prod-->>App: Error (retry)
+    else Queue Has Space
+        RdK-->>CGo: SUCCESS
+        CGo-->>Prod: nil error
+        Prod-->>App: Enqueued (async)
+    end
+
+    Note over Queue,Net: Background thread
+
+    Net->>Queue: Poll for messages
+    Queue->>Net: Batch of messages
+    Net->>Net: Compress batch
+    Net->>Broker: Send batch (TCP)
+
+    Broker-->>Net: Acknowledgment
+    Net->>RdK: Update delivery status
+    RdK->>CGo: Callback with delivery report
+    CGo->>Prod: Post to Events() channel
+    Prod->>App: Read from Events() channel
+
+    App->>App: Check message.TopicPartition.Error
+
+    alt Success
+        Note over App: Message delivered<br/>at offset X
+    else Failure
+        Note over App: Delivery failed<br/>(retry or handle)
+    end
+```
+
+## Producer Message Flow
+
+This sequence diagram shows the journey of a message from application code to Kafka broker and back (delivery report).
+
+### Key Phases
+
+1. **Produce Call** (App → librdkafka)
+   - Application calls `Produce(message)`
+   - Go validates message structure
+   - CGo bridge converts Go types to C structs
+   - librdkafka enqueues message (non-blocking)
+
+2. **Queuing** (librdkafka internal)
+   - Messages accumulate in internal queue
+   - Batching happens based on `linger.ms` and `batch.size`
+   - If queue is full, `Produce()` returns error (backpressure)
+
+3. **Sending** (Background thread → Broker)
+   - librdkafka's network thread polls queue
+   - Compresses batch (if configured)
+   - Sends batch to appropriate broker
+
+4. **Acknowledgment** (Broker → App)
+   - Broker acknowledges receipt
+   - librdkafka triggers delivery report callback
+   - CGo bridge posts to Go Events() channel
+   - Application reads delivery report
+
+### Error Handling
+
+- **Queue Full**: Immediate error, application must retry
+- **Network Error**: Automatic retry by librdkafka (configurable)
+- **Broker Rejection**: Delivery report with error
+
+### Performance Notes
+
+- **Async by Design**: `Produce()` returns immediately (doesn't wait for ack)
+- **Batching**: Multiple messages sent in single request (reduces overhead)
+- **Compression**: Reduces network bandwidth (configurable algorithm)
