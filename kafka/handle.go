@@ -128,6 +128,9 @@ type handle struct {
 	//
 	c *Consumer
 
+	// Enable OpenTelemetry tracing
+	otelEnabled bool
+
 	// WaitGroup to wait for spawned go-routines to finish.
 	waitGroup sync.WaitGroup
 }

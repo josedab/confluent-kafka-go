@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 /*
@@ -313,6 +315,39 @@ func (p *Producer) Produce(msg *Message, deliveryChan chan Event) error {
 	return p.produce(msg, 0, deliveryChan)
 }
 
+// ProduceWithContext produces a message to a topic with OpenTelemetry trace context propagation.
+// If OpenTelemetry is enabled (go.otel.enabled=true), this method will:
+//   - Start a span for the produce operation
+//   - Inject the trace context into the message headers
+//   - Record any errors on the span
+//
+// The message is queued and eventually delivered asynchronously.
+// Read delivery reports from the Events() channel or provide a custom deliveryChan.
+func (p *Producer) ProduceWithContext(ctx context.Context, msg *Message, deliveryChan chan Event) error {
+	err := p.verifyClient()
+	if err != nil {
+		return err
+	}
+
+	if p.handle.otelEnabled && ctx != nil {
+		var span trace.Span
+		ctx, span = startProducerSpan(ctx, msg)
+		defer span.End()
+
+		// Inject trace context into message headers
+		injectTraceContext(ctx, msg)
+
+		// Produce the message
+		err = p.produce(msg, 0, deliveryChan)
+		if err != nil {
+			recordProducerError(span, err)
+		}
+		return err
+	}
+
+	return p.produce(msg, 0, deliveryChan)
+}
+
 // Produce a batch of messages.
 // These batches do not relate to the message batches sent to the broker, the latter
 // are collected on the fly internally in librdkafka.
@@ -545,6 +580,12 @@ func NewProducer(conf *ConfigMap) (*Producer, error) {
 		return nil, err
 	}
 	produceChannelSize := v.(int)
+
+	v, err = confCopy.extract("go.otel.enabled", false)
+	if err != nil {
+		return nil, err
+	}
+	p.handle.otelEnabled = v.(bool)
 
 	logsChanEnable, logsChan, err := confCopy.extractLogConfig()
 	if err != nil {

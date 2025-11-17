@@ -17,11 +17,14 @@
 package kafka
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 /*
@@ -48,6 +51,7 @@ type Consumer struct {
 	rebalanceCb        RebalanceCb
 	appReassigned      bool
 	appRebalanceEnable bool // SerializerConfig setting
+	groupID            string // Consumer group ID for tracing
 
 	isClosed  uint32
 	isClosing uint32
@@ -526,6 +530,83 @@ func (c *Consumer) ReadMessage(timeout time.Duration) (*Message, error) {
 
 }
 
+// ReadMessageWithContext polls the consumer for a message with OpenTelemetry trace context propagation.
+// If OpenTelemetry is enabled (go.otel.enabled=true), this method will:
+//   - Extract the trace context from the message headers
+//   - Start a span for the consume operation
+//   - Link the span to the parent trace context
+//   - Record any errors on the span
+//   - Return a context with the span attached
+//
+// This is a convenience API that wraps Poll() and only returns
+// messages or errors. All other event types are discarded.
+//
+// The call will block for at most `timeout` waiting for
+// a new message or error. `timeout` may be set to -1 for
+// indefinite wait.
+//
+// Timeout is returned as (nil, nil, err) where `err.(kafka.Error).IsTimeout() == true`.
+//
+// Messages are returned as (msg, ctx, nil), where ctx contains the trace span,
+// while general errors are returned as (nil, nil, err).
+//
+// msg.TopicPartition provides partition-specific information (such as topic, partition and offset).
+//
+// All other event types, such as PartitionEOF, AssignedPartitions, etc, are silently discarded.
+//
+// The returned span should be ended by the caller when message processing is complete.
+func (c *Consumer) ReadMessageWithContext(parentCtx context.Context, timeout time.Duration) (*Message, context.Context, trace.Span, error) {
+	err := c.verifyClient()
+	if err != nil {
+		return nil, parentCtx, nil, err
+	}
+
+	var absTimeout time.Time
+	var timeoutMs int
+
+	if timeout > 0 {
+		absTimeout = time.Now().Add(timeout)
+		timeoutMs = (int)(timeout.Seconds() * 1000.0)
+	} else {
+		timeoutMs = (int)(timeout)
+	}
+
+	for {
+		ev := c.Poll(timeoutMs)
+
+		switch e := ev.(type) {
+		case *Message:
+			if e.TopicPartition.Error != nil {
+				return e, parentCtx, nil, e.TopicPartition.Error
+			}
+
+			// Extract trace context and start span if OTel is enabled
+			if c.handle.otelEnabled && parentCtx != nil {
+				ctx := extractTraceContext(parentCtx, e)
+				ctx, span := startConsumerSpan(ctx, e, c.groupID)
+				return e, ctx, span, nil
+			}
+
+			return e, parentCtx, nil, nil
+		case Error:
+			return nil, parentCtx, nil, e
+		default:
+			// Ignore other event types
+		}
+
+		if timeout > 0 {
+			// Calculate remaining time
+			timeoutMs = int(math.Max(0.0, absTimeout.Sub(time.Now()).Seconds()*1000.0))
+		}
+
+		if timeoutMs == 0 && ev == nil {
+			return nil, parentCtx, nil, newError(C.RD_KAFKA_RESP_ERR__TIMED_OUT)
+		}
+
+	}
+
+}
+
 // Close Consumer instance.
 // The object is no longer usable after this call.
 func (c *Consumer) Close() (err error) {
@@ -609,6 +690,7 @@ func NewConsumer(conf *ConfigMap) (*Consumer, error) {
 
 	c := &Consumer{}
 	c.isClosed = 0
+	c.groupID = groupid.(string)
 
 	v, err := confCopy.extract("go.application.rebalance.enable", false)
 	if err != nil {
@@ -627,6 +709,12 @@ func NewConsumer(conf *ConfigMap) (*Consumer, error) {
 		return nil, err
 	}
 	eventsChanSize := v.(int)
+
+	v, err = confCopy.extract("go.otel.enabled", false)
+	if err != nil {
+		return nil, err
+	}
+	c.handle.otelEnabled = v.(bool)
 
 	logsChanEnable, logsChan, err := confCopy.extractLogConfig()
 	if err != nil {

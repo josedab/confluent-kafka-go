@@ -29,6 +29,9 @@ require (
 	github.com/tink-crypto/tink-go-hcvault/v2 v2.1.0
 	github.com/tink-crypto/tink-go/v2 v2.1.0
 	github.com/xiatechs/jsonata-go v1.8.5
+	go.opentelemetry.io/otel v1.24.0
+	go.opentelemetry.io/otel/sdk v1.24.0
+	go.opentelemetry.io/otel/trace v1.24.0
 	golang.org/x/oauth2 v0.18.0
 	google.golang.org/api v0.169.0
 	google.golang.org/genproto v0.0.0-20240325203815-454cdb8f5daa
