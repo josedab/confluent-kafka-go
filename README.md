@@ -166,6 +166,68 @@ go build -tags musl ./...
 A dependency to the latest stable version of confluent-kafka-go should be automatically added to
 your `go.mod` file.
 
+Build Options for Optimizing Binary Size
+-----------------------------------------
+
+confluent-kafka-go supports build tags to exclude optional features and reduce binary size.
+This is especially useful for applications that only need basic Kafka Producer/Consumer functionality.
+
+### Available Build Configurations
+
+#### Full Build (Default)
+Includes all features: Kafka + Schema Registry + Rules + Encryption
+
+```bash
+go build ./...
+```
+
+**Binary size:** ~35MB
+
+#### Minimal Build
+Kafka Producer/Consumer/Admin only. Excludes Schema Registry, rules engines, and encryption.
+
+```bash
+go build -tags minimal ./...
+```
+
+**Binary size:** ~8MB
+
+#### No Schema Registry Build
+Excludes Schema Registry only. Includes Kafka and utilities.
+
+```bash
+go build -tags noschemaregistry ./...
+```
+
+**Binary size:** ~12MB
+
+### Using the Makefile
+
+A Makefile is provided for convenient builds and testing:
+
+```bash
+# Build with all features (default)
+make build
+
+# Build minimal version
+make build-minimal
+
+# Build without Schema Registry
+make build-noschemaregistry
+
+# Test all build configurations
+make test-all
+
+# Check binary sizes
+make size-check
+```
+
+### Important Notes
+
+- Applications built with `minimal` or `noschemaregistry` tags will panic if Schema Registry features are accessed
+- The default build configuration is unchanged and remains 100% backward compatible
+- All build configurations are tested in CI to ensure correctness
+
 Install the client
 ------------------
 

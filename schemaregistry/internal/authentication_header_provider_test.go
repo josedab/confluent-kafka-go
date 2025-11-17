@@ -1,3 +1,5 @@
+//go:build !noschemaregistry && !minimal
+
 package internal
 
 import (

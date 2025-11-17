@@ -1,3 +1,5 @@
+//go:build !noschemaregistry && !minimal
+
 /**
  * Copyright 2024 Confluent Inc.
  *

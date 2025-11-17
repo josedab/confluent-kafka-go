@@ -50,6 +50,34 @@ jobs:
           cd kafka
           go test -v -timeout 2m -tags dynamic
 
+  # Test build configurations (minimal, noschemaregistry)
+  # This job verifies that all build tag configurations work correctly
+  build-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v3
+        with:
+          go-version: '=1.18'
+      # Test full build (default)
+      - name: Test full build
+        run: |
+          echo "Testing full build..."
+          go build ./kafka/...
+          go test -v ./schemaregistry -run TestSchemaRegistryAvailable
+      # Test minimal build
+      - name: Test minimal build
+        run: |
+          echo "Testing minimal build..."
+          go build -tags minimal ./kafka/...
+          go test -v -tags minimal ./schemaregistry -run TestSchemaRegistryPanicsWhenDisabled
+      # Test noschemaregistry build
+      - name: Test noschemaregistry build
+        run: |
+          echo "Testing noschemaregistry build..."
+          go build -tags noschemaregistry ./kafka/...
+          go test -v -tags noschemaregistry ./schemaregistry -run TestSchemaRegistryPanicsWhenDisabled
+
   # The format job runs gofmt and lists all errors in detail.
   # We exclude build_ files -- we develop on go1.18, gofmt by default changes
   # +build to go:build, but since we wish to support go1.14+, we can't make this
