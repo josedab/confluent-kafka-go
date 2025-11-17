@@ -118,7 +118,12 @@ func setupHeadersFromGlueMsg(msg *Message, gMsg *C.glue_msg_t) {
 }
 
 func (h *handle) newMessageFromGlueMsg(gMsg *C.glue_msg_t) (msg *Message) {
-	msg = &Message{}
+	// Use message pool if available (from Consumer)
+	if h.c != nil && h.c.messagePool != nil {
+		msg = h.c.messagePool.Get()
+	} else {
+		msg = &Message{}
+	}
 
 	if gMsg.ts != -1 {
 		ts := int64(gMsg.ts)
@@ -172,7 +177,12 @@ func (h *handle) setupMessageFromC(msg *Message, cmsg *C.rd_kafka_message_t) {
 // newMessageFromC creates a new message object from a C rd_kafka_message_t
 // NOTE: For use with Producer: does not set message timestamp fields.
 func (h *handle) newMessageFromC(cmsg *C.rd_kafka_message_t) (msg *Message) {
-	msg = &Message{}
+	// Use message pool if available (from Producer for delivery reports)
+	if h.p != nil && h.p.messagePool != nil {
+		msg = h.p.messagePool.Get()
+	} else {
+		msg = &Message{}
+	}
 
 	h.setupMessageFromC(msg, cmsg)
 

@@ -148,6 +148,9 @@ type Producer struct {
 
 	// checks if Producer has been closed or not.
 	isClosed uint32
+
+	// messagePool is used for object pooling when go.message.pool.enable is true
+	messagePool *MessagePool
 }
 
 // IsClosed returns boolean representing if client is closed or not
@@ -491,6 +494,7 @@ func (p *Producer) Purge(flags int) error {
 //	go.produce.channel.size (int, 1000000) - ProduceChannel() buffer size (in number of messages)
 //	go.logs.channel.enable (bool, false) - Forward log to Logs() channel.
 //	go.logs.channel (chan kafka.LogEvent, nil) - Forward logs to application-provided channel instead of Logs(). Requires go.logs.channel.enable=true.
+//	go.message.pool.enable (bool, false) - Enable message object pooling for reduced GC pressure in high-throughput scenarios.
 func NewProducer(conf *ConfigMap) (*Producer, error) {
 
 	err := versionCheck()
@@ -551,6 +555,12 @@ func NewProducer(conf *ConfigMap) (*Producer, error) {
 		return nil, err
 	}
 
+	v, err = confCopy.extract("go.message.pool.enable", false)
+	if err != nil {
+		return nil, err
+	}
+	messagePoolEnable := v.(bool)
+
 	if int(C.rd_kafka_version()) < 0x01000000 {
 		// produce.offset.report is no longer used in librdkafka >= v1.0.0
 		v, _ = confCopy.extract("{topic}.produce.offset.report", nil)
@@ -608,6 +618,11 @@ func NewProducer(conf *ConfigMap) (*Producer, error) {
 		producer(p)
 		p.handle.waitGroup.Done()
 	}()
+
+	// Initialize message pool if enabled
+	if messagePoolEnable {
+		p.messagePool = NewMessagePool()
+	}
 
 	return p, nil
 }

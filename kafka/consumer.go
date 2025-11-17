@@ -51,6 +51,9 @@ type Consumer struct {
 
 	isClosed  uint32
 	isClosing uint32
+
+	// messagePool is used for object pooling when go.message.pool.enable is true
+	messagePool *MessagePool
 }
 
 // IsClosed returns boolean representing if client is closed or not
@@ -581,6 +584,7 @@ func (c *Consumer) Close() (err error) {
 //	go.events.channel.size (int, 1000) - Events() channel size
 //	go.logs.channel.enable (bool, false) - Forward log to Logs() channel.
 //	go.logs.channel (chan kafka.LogEvent, nil) - Forward logs to application-provided channel instead of Logs(). Requires go.logs.channel.enable=true.
+//	go.message.pool.enable (bool, false) - Enable message object pooling for reduced GC pressure in high-throughput scenarios.
 //
 // WARNING: Due to the buffering nature of channels (and queues in general) the
 // use of the events channel risks receiving outdated events and
@@ -633,6 +637,12 @@ func NewConsumer(conf *ConfigMap) (*Consumer, error) {
 		return nil, err
 	}
 
+	v, err = confCopy.extract("go.message.pool.enable", false)
+	if err != nil {
+		return nil, err
+	}
+	messagePoolEnable := v.(bool)
+
 	cConf, err := confCopy.convert()
 	if err != nil {
 		return nil, err
@@ -670,6 +680,11 @@ func NewConsumer(conf *ConfigMap) (*Consumer, error) {
 			consumerReader(c, c.readerTermChan)
 			c.handle.waitGroup.Done()
 		}()
+	}
+
+	// Initialize message pool if enabled
+	if messagePoolEnable {
+		c.messagePool = NewMessagePool()
 	}
 
 	return c, nil
