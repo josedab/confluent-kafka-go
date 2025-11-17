@@ -1,6 +1,8 @@
 Confluent's Golang Client for Apache Kafka<sup>TM</sup>
 =====================================================
 
+[![codecov](https://codecov.io/gh/confluentinc/confluent-kafka-go/branch/master/graph/badge.svg)](https://codecov.io/gh/confluentinc/confluent-kafka-go)
+
 **confluent-kafka-go** is Confluent's Golang client for [Apache Kafka](http://kafka.apache.org/) and the
 [Confluent Platform](https://www.confluent.io/product/compare/).
 
@@ -132,6 +134,32 @@ func main() {
 More elaborate examples are available in the [examples](examples) directory,
 including [how to configure](examples/confluent_cloud_example) the Go client
 for use with [Confluent Cloud](https://www.confluent.io/confluent-cloud/).
+
+
+Build Options
+=============
+
+confluent-kafka-go supports feature-gated builds to reduce binary size:
+
+**Full Build (default)** - ~35MB
+```bash
+go build ./...
+```
+Includes all features: Kafka Producer/Consumer/Admin, Schema Registry, serialization, encryption.
+
+**Minimal Build** - ~8MB (77% smaller)
+```bash
+go build -tags minimal ./kafka/...
+```
+Kafka Producer/Consumer/Admin only. Excludes Schema Registry and optional features.
+
+**No Schema Registry** - ~12MB
+```bash
+go build -tags noschemaregistry ./...
+```
+All features except Schema Registry.
+
+See [BUILD.md](BUILD.md) for detailed build options, binary size comparisons, and Docker integration examples.
 
 
 Getting Started
